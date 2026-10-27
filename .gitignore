@@ -1,0 +1,25 @@
+
+# Python environments and cache
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Training datasets
+*.parquet
+
+# Model checkpoints and training outputs
+modernbert_guardrail/
+checkpoint-*/
+runs/
+
+# Local editor and operating system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
