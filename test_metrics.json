@@ -5,8 +5,8 @@
     "recall": 0.980072463768116,
     "f1_score": 0.97214734950584,
     "false_positive_rate": 0.05128205128205128,
-    "average_latency_ms_per_prompt": 573.0517225060959,
-    "total_evaluation_time_seconds": 539.8147226007422,
+    "average_latency_ms_per_prompt": 149.41448482092582,
+    "total_evaluation_time_seconds": 140.7484447013121,
     "confusion_matrix": {
         "true_negative": 370,
         "false_positive": 20,

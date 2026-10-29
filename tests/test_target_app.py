@@ -3,8 +3,41 @@ from unittest.mock import Mock
 import pytest
 
 from target.app import TargetApplication
-from target.dummy_guardrail import DummyGuardrail
+from common.schemas import GuardrailResponse
+from target.guardrail_adapter import ModernBERTGuardrailAdapter
 
+class StubModernBERT:
+    """Controlled test double for testing application behavior."""
+
+    def __init__(self, decision="ALLOW"):
+        if decision not in {"ALLOW", "FLAG", "BLOCK"}:
+            raise ValueError("Invalid guardrail decision")
+        self.decision = decision
+
+    def evaluate(
+        self,
+        user_prompt,
+        conversation_history="",
+        retrieved_context="",
+        tool_output="",
+        memory="",
+    ):
+        score = {
+            "ALLOW": 0.0,
+            "FLAG": 0.6,
+            "BLOCK": 1.0,
+        }[self.decision]
+
+        return {
+            "action": self.decision,
+            "malicious_score": score,
+            "reason": "Controlled test decision",
+            "latency_ms": 1.0,
+        }
+
+
+def make_test_guardrail(decision="ALLOW"):
+    return ModernBERTGuardrailAdapter(StubModernBERT(decision))
 
 @pytest.fixture
 def requested_action():
@@ -21,7 +54,7 @@ def test_allow_generates_model_response(requested_action):
     model_client.generate.return_value = "Qwen generated response."
 
     app = TargetApplication(
-        guardrail=DummyGuardrail("ALLOW"),
+        guardrail=make_test_guardrail("ALLOW"),
         model_client=model_client,
     )
 
@@ -44,7 +77,7 @@ def test_flag_and_block_do_not_call_model(decision, requested_action):
     model_client = Mock()
 
     app = TargetApplication(
-        guardrail=DummyGuardrail(decision),
+        guardrail=make_test_guardrail(decision),
         model_client=model_client,
     )
 
@@ -68,7 +101,7 @@ def test_model_failure_returns_error(requested_action):
     model_client.generate.side_effect = RuntimeError("Model unavailable")
 
     app = TargetApplication(
-        guardrail=DummyGuardrail("ALLOW"),
+        guardrail=make_test_guardrail("ALLOW"),
         model_client=model_client,
     )
 
@@ -86,14 +119,14 @@ def test_model_failure_returns_error(requested_action):
 
 def test_invalid_guardrail_decision_is_rejected():
     with pytest.raises(ValueError):
-        DummyGuardrail("INVALID")
+        make_test_guardrail("INVALID")
 
 def test_accepts_complete_shared_request():
     model_client = Mock()
     model_client.generate.return_value = "Complete request accepted."
 
     app = TargetApplication(
-        guardrail=DummyGuardrail("ALLOW"),
+        guardrail=make_test_guardrail("ALLOW"),
         model_client=model_client,
     )
 
@@ -137,7 +170,7 @@ def test_blocked_request_does_not_execute_tool():
 
     tool_executor = Mock()
     app = TargetApplication(
-        guardrail=DummyGuardrail("BLOCK"),
+        guardrail=make_test_guardrail("BLOCK"),
         model_client=Mock(),
         tool_executor=tool_executor,
     )
@@ -163,7 +196,7 @@ def test_flagged_request_does_not_execute_tool():
 
     tool_executor = Mock()
     app = TargetApplication(
-        guardrail=DummyGuardrail("FLAG"),
+        guardrail=make_test_guardrail("FLAG"),
         model_client=Mock(),
         tool_executor=tool_executor,
     )
@@ -189,7 +222,7 @@ def test_unauthorized_tool_request_is_rejected():
 
     model_client = Mock()
     app = TargetApplication(
-        guardrail=DummyGuardrail("ALLOW"),
+        guardrail=make_test_guardrail("ALLOW"),
         model_client=model_client,
     )
 
@@ -217,7 +250,7 @@ def test_invalid_tool_name_is_rejected():
     tool_executor = Mock()
 
     app = TargetApplication(
-        guardrail=DummyGuardrail("ALLOW"),
+        guardrail=make_test_guardrail("ALLOW"),
         model_client=model_client,
         tool_executor=tool_executor,
     )
@@ -248,7 +281,7 @@ def test_successful_mock_tool_is_reported():
     model_client.generate.return_value = "The calculation is complete."
 
     app = TargetApplication(
-        guardrail=DummyGuardrail("ALLOW"),
+        guardrail=make_test_guardrail("ALLOW"),
         model_client=model_client,
     )
 
@@ -281,7 +314,7 @@ def test_application_response_has_expected_fields():
     model_client.generate.return_value = "Test response."
 
     app = TargetApplication(
-        guardrail=DummyGuardrail("ALLOW"),
+        guardrail=make_test_guardrail("ALLOW"),
         model_client=model_client,
     )
 
