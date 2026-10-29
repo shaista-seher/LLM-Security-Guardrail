@@ -30,32 +30,19 @@ class ModernBERTGuardrail:
         self.model.eval()
         print("Guardrail ready.\n")
 
-    def build_context(
-        self,
-        user_prompt,
-        conversation_history="",
-        retrieved_context="",
-        tool_output="",
-        memory="",
-    ):
-        # Label each source so the model receives its context.
-        # These labels do not guarantee that the model understands
-        # the trust level of each source.
-        sections = [
-            ("User prompt", user_prompt),
-            ("Conversation history", conversation_history),
-            ("Retrieved content", retrieved_context),
-            ("Tool output", tool_output),
-            ("Agent memory", memory),
-        ]
-
+    def build_context(self, user_prompt, conversation_history="", retrieved_context="", tool_output="", memory=""):
         parts = [
-            f"[{name}]\n{value.strip()}"
-            for name, value in sections
-            if value and value.strip()
+            user_prompt,
+            conversation_history,
+            retrieved_context,
+            tool_output,
+            memory,
         ]
-        return "\n\n".join(parts)
-
+        return "\n".join(
+            value.strip() for value in parts
+            if value and value.strip()
+        )
+    
     def evaluate(
         self,
         user_prompt,
@@ -95,51 +82,60 @@ class ModernBERTGuardrail:
         malicious_score = probabilities[1].item()
 
         
-        prompt_lower = user_prompt.lower()
+        
+        import re
+
+        prompt_lower = user_prompt.lower().strip()
         context_lower = context.lower()
 
-        injection_markers = [
-            "ignore all previous instructions",
-            "disregard previous instructions",
-            "reveal your hidden system prompt",
-            "reveal the system prompt",
-            "ignore your system instructions",
-            "bypass your safety instructions",
-        ]
-
-        cybersecurity_terms = [
-            "black hat",
-            "hacking",
-            "hack a system",
-            "malware",
-            "ransomware",
-            "phishing",
-            "exploit",
-            "steal credentials",
+        # Detect common instruction-override and data-extraction attempts.
+        injection_patterns = [
+            r"\bignore\s+(?:all\s+)?(?:the\s+)?(?:previous\s+|prior\s+)?(?:prompts?|instructions?)\b",
+            r"\bdisregard\s+(?:all\s+)?(?:previous\s+|prior\s+)?instructions?\b",
+            r"\b(?:reveal|show|expose)\b.{0,60}\b(?:hidden|system)\s+(?:prompt|instructions?)\b",
+            r"\b(?:bypass|override)\b.{0,60}\b(?:safety|system)\s+instructions?\b",
+            r"\b(?:give|fetch|dump|reveal|expose)\b.{0,80}\b(?:internal|private|hidden|backend|behind)\s+databases?\b",
+            r"\b(?:fetch|dump|exfiltrate)\b.{0,60}\b(?:internal|private)\s+(?:database|data|records)\b",
         ]
 
         explicit_injection = any(
-            marker in context_lower
-            for marker in injection_markers
+            re.search(pattern, context_lower)
+            for pattern in injection_patterns
         )
 
-        cybersecurity_topic = any(
-            term in prompt_lower
-            for term in cybersecurity_terms
-        )
+        # Only allow obvious, standalone low-risk requests.
+        # Never apply this exception when additional context is present.
+        standalone_prompt = context.strip() == user_prompt.strip()
 
-        if malicious_score >= BLOCK_THRESHOLD and explicit_injection:
+        is_greeting = bool(re.fullmatch(
+            r"(?:hey+|hi+|hello+|heyy+|how are you|"
+            r"hey+[, ]+how are you)[!?. ]*",
+            prompt_lower
+        ))
+
+        is_simple_weather = bool(re.fullmatch(
+            r"(?:what is|what's|whats)\s+the temperature"
+            r"\s+in\s+[a-zA-Z ]+"
+            r"(?:\s+(?:right now|now|today))?[?!. ]*",
+            prompt_lower
+        ))
+
+        if explicit_injection:
             action = "BLOCK"
-            reason = "High risk score with an explicit instruction-override pattern."
-        elif malicious_score >= BLOCK_THRESHOLD and cybersecurity_topic:
-            action = "FLAG"
-            reason = "High risk score on a cybersecurity-related prompt; human review required."
+            reason = "Explicit instruction override or sensitive-data extraction detected."
+
+        elif standalone_prompt and (is_greeting or is_simple_weather):
+            action = "ALLOW"
+            reason = "Recognized standalone, low-risk conversational request."
+
         elif malicious_score >= BLOCK_THRESHOLD:
             action = "BLOCK"
-            reason = "High maliciousness score."
+            reason = "High maliciousness score; further review may be warranted."
+
         elif malicious_score >= FLAG_THRESHOLD:
             action = "FLAG"
             reason = "Suspicious score; additional checks required."
+
         else:
             action = "ALLOW"
             reason = "Low maliciousness score under the current policy."
