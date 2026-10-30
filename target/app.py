@@ -1,19 +1,19 @@
 from typing import Any
 
 from common.schemas import (
-    RequestSchema,
     TargetApplicationResponse,
     ActionResult,
 )
 from target.context_builder import ContextBuilder
-from target.dummy_guardrail import DummyGuardrail
+from guardrail import ModernBERTGuardrail
 from target.model_client import OllamaModelClient
 from target.tool_executor import SafeToolExecutor
+from target.guardrail_adapter import ModernBERTGuardrailAdapter
 
 
 class TargetApplication:
     """
-    Target application using a local Ollama model and a dummy Guardrail.
+    Target application using real ModernBERT guardrails and a local Ollama model.
 
     Only explicitly requested mock tools may execute.
     Real external actions are disabled.
@@ -26,7 +26,12 @@ class TargetApplication:
         context_builder=None,
         tool_executor=None,
     ):
-        self.guardrail = guardrail or DummyGuardrail()
+        if guardrail is None:
+            guardrail = ModernBERTGuardrailAdapter(
+                ModernBERTGuardrail()
+            )
+
+        self.guardrail = guardrail
         self.model_client = model_client or OllamaModelClient()
         self.context_builder = context_builder or ContextBuilder()
         self.tool_executor = tool_executor or SafeToolExecutor()
@@ -46,6 +51,8 @@ class TargetApplication:
             request_data = case_id
             case_id = None
 
+        context = None
+
         if request_data is not None:
             context = self.context_builder.build(request_data)
             case_id = context["case_id"]
@@ -61,13 +68,28 @@ class TargetApplication:
 
         if not case_id.strip():
             raise ValueError("case_id cannot be empty.")
+
         if not user_prompt.strip():
             raise ValueError("user_prompt cannot be empty.")
 
         action_type = requested_action.get("action_type", "")
 
-        # Temporary integration: the dummy Guardrail remains in use.
-        guardrail_result = self.guardrail.evaluate(case_id)
+        # Evaluate the guardrail before generating a response or executing a tool.
+        if context is not None:
+            guardrail_result = self.guardrail.evaluate(
+                case_id=case_id,
+                user_prompt=user_prompt,
+                conversation_history=context["conversation_history"],
+                rag_content=context["rag_content"],
+                web_content=context["web_content"],
+                tool_output=context["tool_output"],
+                memory=context["memory"],
+            )
+        else:
+            guardrail_result = self.guardrail.evaluate(
+                case_id=case_id,
+                user_prompt=user_prompt,
+            )
 
         if guardrail_result.decision == "BLOCK":
             return self._make_result(
@@ -88,7 +110,8 @@ class TargetApplication:
                 action_type,
                 "Action requires review and was not executed.",
             )
-                # Reject unknown actions instead of silently treating them as text requests.
+
+        # Reject unknown actions instead of silently treating them as text requests.
         allowed_action_types = {
             "none",
             "search_mock",
@@ -135,6 +158,7 @@ class TargetApplication:
                     f"{user_prompt}\n\n"
                     f"Mock tool result: {action_result.result_summary}"
                 )
+
                 return self._make_result(
                     case_id,
                     generated_response,
@@ -144,6 +168,7 @@ class TargetApplication:
                     action_result.result_summary,
                     action_result=action_result,
                 )
+
             except Exception as exc:
                 return self._make_result(
                     case_id,
@@ -159,6 +184,7 @@ class TargetApplication:
         # Non-tool requests generate a normal model response.
         try:
             generated_response = self.model_client.generate(user_prompt)
+
             return self._make_result(
                 case_id,
                 generated_response,
@@ -167,6 +193,7 @@ class TargetApplication:
                 action_type,
                 "Model response generated. No real action was executed.",
             )
+
         except Exception as exc:
             return self._make_result(
                 case_id,
