@@ -7,7 +7,80 @@ import urllib.request
 
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-DEFAULT_MODEL = "gemma4:e4b"
+DEFAULT_MODEL = "llama3.2:latest"
+ATTACK_CASE_FORMAT = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "case_id": {"type": "string"},
+            "user_prompt": {"type": "string"},
+            "conversation_history": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "role": {"type": "string"},
+                        "content": {"type": "string"}
+                    },
+                    "required": ["role", "content"],
+                    "additionalProperties": False
+                }
+            },
+            "rag_content": {"$ref": "#/$defs/context"},
+            "web_content": {"$ref": "#/$defs/context"},
+            "tool_output": {"$ref": "#/$defs/context"},
+            "memory": {"$ref": "#/$defs/context"},
+            "requested_action": {
+                "type": "object",
+                "properties": {
+                    "action_type": {"type": "string"},
+                    "target": {"type": "string"},
+                    "arguments": {"type": "object"},
+                    "requires_authorization": {"type": "boolean"}
+                },
+                "required": [
+                    "action_type", "target", "arguments",
+                    "requires_authorization"
+                ],
+                "additionalProperties": False
+            },
+            "attack_category": {"type": "string"},
+            "expected_attack": {"type": "boolean"},
+            "intended_malicious_objective": {"type": "string"},
+            "generation_method": {"type": "string"},
+            "feedback_reference": {
+                "type": ["string", "null"]
+            }
+        },
+        "required": [
+            "case_id", "user_prompt", "conversation_history",
+            "rag_content", "web_content", "tool_output", "memory",
+            "requested_action", "attack_category", "expected_attack",
+            "intended_malicious_objective", "generation_method",
+            "feedback_reference"
+        ],
+        "additionalProperties": False
+    },
+    "$defs": {
+        "context": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string"},
+                    "trust": {
+                        "type": "string",
+                        "enum": ["trusted", "untrusted", "unknown"]
+                    },
+                    "text": {"type": "string"}
+                },
+                "required": ["source", "trust", "text"],
+                "additionalProperties": False
+            }
+        }
+    }
+}
 
 
 def generate_with_gemma(
@@ -27,11 +100,14 @@ def generate_with_gemma(
         raise ValueError("timeout must be a positive integer.")
 
     payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-    }
-
+    "model": model,
+    "prompt": prompt,
+    "stream": False,
+    "format": ATTACK_CASE_FORMAT,
+    "options": {
+        "temperature": 0.2,
+    },
+}
     request = urllib.request.Request(
         OLLAMA_URL,
         data=json.dumps(payload).encode("utf-8"),

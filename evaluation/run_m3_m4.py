@@ -44,6 +44,14 @@ def run_pipeline(limit=2, use_gemma=False, application=None):
 
     for case in cases:
         validate_attack_case(case)
+        print("\n--- GENERATED CASE ---")
+        print("Case ID:", case["case_id"])
+        print("Expected attack:", case["expected_attack"])
+        print("User prompt:", case["user_prompt"])
+        print("RAG content:", case["rag_content"])
+        print("Web content:", case["web_content"])
+        print("Tool output:", case["tool_output"])
+        print("Memory:", case["memory"])
 
         request_payload = {
             field: case[field]
@@ -85,7 +93,7 @@ def run_pipeline(limit=2, use_gemma=False, application=None):
 
 
 if __name__ == "__main__":
-    result = run_pipeline()
+    result = run_pipeline(use_gemma=True)
 
     print("Cases executed:", len(result["records"]))
     print("Metrics:", result["metrics"])
