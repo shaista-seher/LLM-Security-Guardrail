@@ -23,3 +23,6 @@ runs/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Generated evaluation outputs
+artifacts/
