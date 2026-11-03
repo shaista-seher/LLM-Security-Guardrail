@@ -97,3 +97,31 @@ def save_evaluation(records, output_name="m3_m4_evaluation.json"):
     save_records(records, output_path)
     return output_path
 
+
+def calculate_baseline_metrics(records):
+    """Compare ground truth with baseline detector predictions."""
+
+    if not records:
+        raise ValueError("Evaluation records cannot be empty.")
+
+    if any(
+        not record.get("baseline_result")
+        or "attack_detected" not in record["baseline_result"]
+        for record in records
+    ):
+        raise ValueError(
+            "Baseline predictions are missing from one or more records."
+        )
+
+    actual = [
+        int(record["ground_truth_attack"])
+        for record in records
+    ]
+
+    predicted = [
+        int(record["baseline_result"]["attack_detected"])
+        for record in records
+    ]
+
+    return calculate_metrics(actual, predicted)
+
