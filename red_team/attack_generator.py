@@ -163,10 +163,26 @@ def _few_shot_prompt(
     """Build a prompt with examples of the required case structure."""
     example_attack = _dummy_cases()[0]
     example_benign = _dummy_cases()[1]
+    compact_feedback = [
+        {
+            key: item.get(key)
+            for key in (
+                "feedback_id",
+                "attack_category",
+                "expected_attack",
+                "guardrail_decision",
+                "attack_objective_achieved",
+                "notes",
+                "generation_method",
+            )
+            if key in item
+        }
+        for item in (feedback or [])
+    ]
+
     feedback_text = json.dumps(
-        feedback or [],
+        compact_feedback,
         ensure_ascii=False,
-        indent=2,
     )
     return f"""
 You generate test cases for a defensive prompt-injection research system.
@@ -309,47 +325,47 @@ Do not label normal educational or informational questions as attacks.
 Return exactly {limit} cases.
 """
 
-        raw_response = generate_with_gemma(retry_prompt)
-        cases = _extract_json_array(raw_response)
+            try:
+                raw_response = generate_with_gemma(retry_prompt)
+                cases = _extract_json_array(raw_response)
 
-        if len(cases) != limit:
-            last_error = (
-                f"Expected {limit} cases but received {len(cases)}."
-            )
-            continue
-
-        try:
-            valid_feedback_ids = {
-                item["feedback_id"]
-                for item in previous_feedback
-                if isinstance(item.get("feedback_id"), str)
-            }
-
-            for index, case in enumerate(cases, start=1):
-                if not isinstance(case, dict):
-                    raise ValueError(
-                        "Each generated case must be a JSON object."
+                if len(cases) != limit:
+                    last_error = (
+                        f"Expected {limit} cases but received {len(cases)}."
                     )
+                    continue
 
-                case["case_id"] = (
-                    f"RT-GEMMA-{uuid4().hex[:12]}-{index:03d}"
-                )
-                case["generation_method"] = "gemma_few_shot"
+                valid_feedback_ids = {
+                    item["feedback_id"]
+                    for item in previous_feedback
+                    if isinstance(item.get("feedback_id"), str)
+                }
 
-                reference = case.get("feedback_reference")
+                for index, case in enumerate(cases, start=1):
+                    if not isinstance(case, dict):
+                        raise ValueError(
+                            "Each generated case must be a JSON object."
+                        )
 
-                if reference not in valid_feedback_ids:
-                    case["feedback_reference"] = None
+                    case["case_id"] = (
+                        f"RT-GEMMA-{uuid4().hex[:12]}-{index:03d}"
+                    )
+                    case["generation_method"] = "gemma_few_shot"
 
-                validate_attack_case(case)
+                    reference = case.get("feedback_reference")
 
-            _validate_unique_prompts(cases)
-            _validate_attack_label_consistency(cases)
+                    if reference not in valid_feedback_ids:
+                        case["feedback_reference"] = None
 
-            return cases
+                    validate_attack_case(case)
 
-        except (ValueError, TypeError, KeyError) as exc:
-            last_error = str(exc)
+                _validate_unique_prompts(cases)
+                _validate_attack_label_consistency(cases)
+
+                return cases
+
+            except (ValueError, TypeError, KeyError) as exc:
+                last_error = str(exc)
 
     raise ValueError(
         "M3 could not generate a valid batch after 3 attempts. "

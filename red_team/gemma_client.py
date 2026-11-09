@@ -7,7 +7,7 @@ import urllib.request
 
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-DEFAULT_MODEL = "llama3.2:latest"
+DEFAULT_MODEL = "gemma4:latest"
 ATTACK_CASE_FORMAT = {
     "type": "array",
     "items": {
@@ -105,7 +105,8 @@ def generate_with_gemma(
     "stream": False,
     "format": ATTACK_CASE_FORMAT,
     "options": {
-        "temperature": 0.2,
+    "temperature": 0.2,
+    "num_predict": 4096,
     },
 }
     request = urllib.request.Request(

@@ -3,6 +3,7 @@
 
 import json
 import time
+from red_team.feedback_memory import record_attack_outcome
 
 from common.schemas import (
     validate_attack_case,
@@ -49,6 +50,7 @@ def run_pipeline(
     use_gemma=False,
     application=None,
     use_baseline=False,
+    attack_cases=None,
 ):
     """Run M3 cases through M1/M2 and optionally compare a baseline."""
 
@@ -61,10 +63,13 @@ def run_pipeline(
         from evaluation.baseline import BaselineDetector
         baseline = BaselineDetector()
 
-    cases = generate_validated_cases(
-        limit=limit,
-        use_gemma=use_gemma,
-    )
+    if attack_cases is None:
+        cases = generate_validated_cases(
+            limit=limit,
+            use_gemma=use_gemma,
+        )
+    else:
+        cases = attack_cases
 
     records = []
 
@@ -90,6 +95,7 @@ def run_pipeline(
             request_data=request_payload
         )
         latency_ms = (time.perf_counter() - start) * 1000
+        print(f"Measured request latency: {latency_ms:.2f} ms")
 
         target_result = response.model_dump()
         guardrail_result = target_result["guardrail_result"]
@@ -108,14 +114,42 @@ def run_pipeline(
                 build_baseline_input(case)
             )
 
+        objective_achieved = None
+
+        if case["expected_attack"]:
+            if guardrail_result["decision"] in {"BLOCK", "FLAG"}:
+                objective_achieved = False
+
         record = build_evaluation_record(
             case=case,
             guardrail_result=guardrail_result,
             target_result=target_result,
             latency_ms=latency_ms,
             baseline_result=baseline_result,
+            attack_objective_achieved=objective_achieved,
         )
+
         records.append(record)
+        record_attack_outcome({
+            "case_id": case["case_id"],
+            "attack_category": case["attack_category"],
+            "expected_attack": case["expected_attack"],
+            "guardrail_decision": guardrail_result["decision"].lower(),
+            "attack_objective_achieved": record["attack_objective_achieved"],
+            "notes": record["notes"],
+            "classifier_score": guardrail_result["classifier_score"],
+            "risk_score": guardrail_result["risk_score"],
+            "target_response": target_result["response"],
+            "execution_status": target_result["execution_status"],
+            "generation_method": case.get("generation_method"),
+            "evaluation_run_id": record["run_id"],
+            "test_inputs": {
+                "user_prompt": case["user_prompt"],
+                "rag_content": case["rag_content"],
+                "web_content": case["web_content"],
+            },
+        })
+        
 
     metrics = calculate_guardrail_metrics(records)
 
@@ -138,7 +172,7 @@ if __name__ == "__main__":
     result = run_pipeline(
         limit=2,
         use_gemma=True,
-        use_baseline=False,
+        use_baseline=True,
     )
 
     print("Cases executed:", len(result["records"]))
