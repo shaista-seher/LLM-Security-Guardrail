@@ -161,9 +161,15 @@ def test_accepts_complete_shared_request():
     assert result.execution_status == "COMPLETED"
     assert result.action_result.executed is False
 
-    model_client.generate.assert_called_once_with(
-        "Summarize the information."
-    )
+    model_client.generate.assert_called_once()
+
+    generated_prompt = model_client.generate.call_args.args[0]
+
+    assert "Summarize the information." in generated_prompt
+    assert "Previous question" in generated_prompt
+    assert "local_document" in generated_prompt
+    assert "Local information." in generated_prompt
+    assert "trusted" in generated_prompt
 
 def test_blocked_request_does_not_execute_tool():
     from unittest.mock import Mock

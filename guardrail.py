@@ -7,12 +7,12 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 # Paths and initial decision thresholds
 ROOT = Path(__file__).resolve().parent
-MODEL_DIR = ROOT / "modernbert_guardrail"
+MODEL_DIR = ROOT / "modernbert_guardrail_candidate_v2"
 MAX_LENGTH = 256
 
 # Provisional thresholds: calibrate using validation data later
-FLAG_THRESHOLD = 0.50
-BLOCK_THRESHOLD = 0.90
+FLAG_THRESHOLD = 0.9674102663993835
+BLOCK_THRESHOLD = 0.9674102663993835
 
 class ModernBERTGuardrail:
     def __init__(self):
@@ -43,6 +43,7 @@ class ModernBERTGuardrail:
             if value and value.strip()
         )
     
+    
     def evaluate(
         self,
         user_prompt,
@@ -51,6 +52,8 @@ class ModernBERTGuardrail:
         tool_output="",
         memory="",
     ):
+        import re
+
         context = self.build_context(
             user_prompt,
             conversation_history,
@@ -64,38 +67,46 @@ class ModernBERTGuardrail:
 
         start = time.perf_counter()
 
-        inputs = self.tokenizer(
-            context,
-            max_length=MAX_LENGTH,
-            truncation=True,
-            padding="max_length",
-            return_tensors="pt",
-        )
+        # Classify the user's prompt independently.
+        # Do not let ordinary retrieved information distort this score.
+        prompt_text = user_prompt.strip()
 
-        with torch.inference_mode():
-            logits = self.model(**inputs).logits
-            probabilities = torch.softmax(logits, dim=1)[0]
+        if prompt_text:
+            inputs = self.tokenizer(
+                prompt_text,
+                max_length=MAX_LENGTH,
+                truncation=True,
+                padding="max_length",
+                return_tensors="pt",
+            )
 
-        latency_ms = (time.perf_counter() - start) * 1000
+            with torch.inference_mode():
+                logits = self.model(**inputs).logits
+                probabilities = torch.softmax(logits, dim=1)[0]
 
-        # Dataset mapping: class 0 = benign, class 1 = malicious
-        malicious_score = probabilities[1].item()
+            prompt_malicious_score = probabilities[1].item()
+            benign_score = probabilities[0].item()
+        else:
+            prompt_malicious_score = 0.0
+            benign_score = 1.0
 
-        
-        
-        import re
-
-        prompt_lower = user_prompt.lower().strip()
+        # Inspect ALL supplied content for explicit injection attempts.
+        # Trust labels do not exempt content from inspection.
         context_lower = context.lower()
 
-        # Detect common instruction-override and data-extraction attempts.
         injection_patterns = [
             r"\bignore\s+(?:all\s+)?(?:the\s+)?(?:previous\s+|prior\s+)?(?:prompts?|instructions?)\b",
             r"\bdisregard\s+(?:all\s+)?(?:previous\s+|prior\s+)?instructions?\b",
-            r"\b(?:reveal|show|expose)\b.{0,60}\b(?:hidden|system)\s+(?:prompt|instructions?)\b",
-            r"\b(?:bypass|override)\b.{0,60}\b(?:safety|system)\s+instructions?\b",
-            r"\b(?:give|fetch|dump|reveal|expose)\b.{0,80}\b(?:internal|private|hidden|backend|behind)\s+databases?\b",
-            r"\b(?:fetch|dump|exfiltrate)\b.{0,60}\b(?:internal|private)\s+(?:database|data|records)\b",
+            r"\bforget\s+(?:all\s+)?(?:previous\s+|prior\s+)?instructions?\b",
+            r"\boverride\s+(?:all\s+)?(?:previous\s+|current\s+)?instructions?\b",
+            r"\breveal\b.{0,80}\b(?:system prompt|hidden prompt|secret instructions)\b",
+            r"\b(?:show|expose|print|display)\b.{0,80}\b(?:system prompt|hidden instructions)\b",
+            r"\bbypass\b.{0,60}\b(?:safety|security|guardrails?)\b",
+            r"\b(?:exfiltrate|dump|steal)\b.{0,80}\b(?:secrets?|credentials?|private data|api keys?)\b",
+            r"\b(?:send|output|return)\b.{0,80}\b(?:passwords?|api keys?|secret tokens?)\b",
+            r"\b(?:do not|don't)\s+follow\s+(?:the\s+)?(?:previous|original|system)\s+instructions?\b",
+            r"\byou are now\b.{0,80}\b(?:unrestricted|unfiltered|jailbroken)\b",
+            r"\b(?:act as|pretend to be)\b.{0,80}\b(?:unrestricted|unfiltered|no restrictions)\b",
         ]
 
         explicit_injection = any(
@@ -103,50 +114,43 @@ class ModernBERTGuardrail:
             for pattern in injection_patterns
         )
 
-        # Only allow obvious, standalone low-risk requests.
-        # Never apply this exception when additional context is present.
-        standalone_prompt = context.strip() == user_prompt.strip()
+        latency_ms = (time.perf_counter() - start) * 1000
 
-        is_greeting = bool(re.fullmatch(
-            r"(?:hey+|hi+|hello+|heyy+|how are you|"
-            r"hey+[, ]+how are you)[!?. ]*",
-            prompt_lower
-        ))
-
-        is_simple_weather = bool(re.fullmatch(
-            r"(?:what is|what's|whats)\s+the temperature"
-            r"\s+in\s+[a-zA-Z ]+"
-            r"(?:\s+(?:right now|now|today))?[?!. ]*",
-            prompt_lower
-        ))
-
+        # Explicit injection indicators take priority over classifier scores.
         if explicit_injection:
             action = "BLOCK"
-            reason = "Explicit instruction override or sensitive-data extraction detected."
+            malicious_score = 1.0
+            reason = (
+                "Explicit instruction override or sensitive-data "
+                "extraction detected in the supplied content."
+            )
 
-        elif standalone_prompt and (is_greeting or is_simple_weather):
-            action = "ALLOW"
-            reason = "Recognized standalone, low-risk conversational request."
-
-        elif malicious_score >= BLOCK_THRESHOLD:
+        elif prompt_malicious_score >= BLOCK_THRESHOLD:
             action = "BLOCK"
-            reason = "High maliciousness score; further review may be warranted."
+            malicious_score = prompt_malicious_score
+            reason = "High maliciousness score in the user prompt."
 
-        elif malicious_score >= FLAG_THRESHOLD:
+        elif prompt_malicious_score >= FLAG_THRESHOLD:
             action = "FLAG"
-            reason = "Suspicious score; additional checks required."
+            malicious_score = prompt_malicious_score
+            reason = "Suspicious user prompt; additional review required."
 
         else:
             action = "ALLOW"
-            reason = "Low maliciousness score under the current policy."
+            malicious_score = prompt_malicious_score
+            reason = (
+                "User prompt has a low maliciousness score and no "
+                "explicit injection pattern was detected in the context."
+            )
 
         return {
             "action": action,
             "malicious_score": round(malicious_score, 4),
-            "benign_score": round(probabilities[0].item(), 4),
+            "benign_score": round(benign_score, 4),
             "reason": reason,
             "latency_ms": round(latency_ms, 2),
         }
+
 
 
 def main():
